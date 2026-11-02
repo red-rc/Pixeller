@@ -72,6 +72,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout code (for git history)
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
       - name: Download all workflow artifacts
         uses: actions/download-artifact@v4
 
@@ -85,15 +90,65 @@ jobs:
           echo "tag_name=$VERSION" >> $GITHUB_OUTPUT
           echo "Generated version: $VERSION"
 
+      - name: Generate AI Release Notes (Gemini)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        shell: python3
+        run: |
+          import os
+          import urllib.request
+          import json
+          import subprocess
+
+          api_key = os.environ.get("GEMINI_API_KEY")
+          
+          try:
+              commits = subprocess.check_output(["git", "log", "-n", "10", "--pretty=format:- %s"]).decode("utf-8")
+          except Exception:
+              commits = "General performance and stability improvements."
+
+          prompt = f"""
+          Based on the following git commit messages, write a very short, human-friendly release notes summary in English. 
+          CRITICAL RULES:
+          1. Completely ignore and omit any technical project details, file names, class names, namespaces, methods, internal code structures, AOT, trimming, or framework jargon found in the commits. 
+          2. Translate raw developer commits into user-centric improvements (e.g., bug fixes, UI tweaks, stability).
+          3. Write it like a human developer talking warmly to end-users. 
+          4. Keep it extremely concise (2-3 short sentences or bullet points).
+
+          Commits:
+          {commits}
+          """
+
+          ai_notes = "Routine updates and improvements."
+
+          if api_key:
+              url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + api_key
+              headers = {"Content-Type": "application/json"}
+              data = {
+                  "contents": [{
+                      "parts": [{"text": prompt}]
+                  }]
+              }
+              
+              try:
+                  req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
+                  with urllib.request.urlopen(req) as response:
+                      res = json.loads(response.read().decode("utf-8"))
+                      ai_notes = res["candidates"][0]["content"]["parts"][0]["text"].strip()
+              except Exception as e:
+                  print(f"Failed to generate AI notes, falling back. Error: {e}")
+
+          final_body = f"{ai_notes}\n\n---\n- Build run: ${{ github.run_number }}\n- Commit: ${{ github.sha }}"
+          
+          with open("release_notes.md", "w") as f:
+              f.write(final_body)
+
       - name: Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag_name }}
           name: "Pixeller ${{ steps.version.outputs.tag_name }}"
-          body: |
-            Automatic pre-release build for Pixeller.
-            - Build run: ${{ github.run_number }}
-            - Commit: ${{ github.sha }}
+          body_path: release_notes.md
           draft: false
           prerelease: true
           files: |
