@@ -93,8 +93,9 @@ jobs:
       - name: Generate AI Release Notes (Gemini)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        shell: python3
+        shell: bash
         run: |
+          python3 - << 'EOF'
           import os
           import urllib.request
           import json
@@ -138,10 +139,14 @@ jobs:
               except Exception as e:
                   print(f"Failed to generate AI notes, falling back. Error: {e}")
 
-          final_body = f"{ai_notes}\n\n---\n- Build run: ${{ github.run_number }}\n- Commit: ${{ github.sha }}"
-          
           with open("release_notes.md", "w") as f:
-              f.write(final_body)
+              f.write(ai_notes)
+          EOF
+
+          echo "" >> release_notes.md
+          echo "---" >> release_notes.md
+          echo "- Build run: ${{ github.run_number }}" >> release_notes.md
+          echo "- Commit: ${{ github.sha }}" >> release_notes.md
 
       - name: Release and Upload Assets
         uses: softprops/action-gh-release@v2
